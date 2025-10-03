@@ -1,17 +1,12 @@
-# streamlit_flipside_app_sdk.py
-# Streamlit app that queries Flipside via their Python SDK and shows an hourly tx_count bar chart.
-# Usage:
-# 1) Install requirements: pip install streamlit flipside-sdk pandas altair
-# 2) Add your SDK API key in Streamlit Cloud → Settings → Secrets:
-#    FLIPSIDE_API_KEY = "your_sdk_api_key_here"
-# 3) Run: streamlit run streamlit_flipside_app_sdk.py
+# streamlit_flipside_app_final.py
+# Streamlit app that queries Flipside via Python SDK and shows hourly transaction counts.
 
 from datetime import timedelta
 import pandas as pd
 import altair as alt
 import streamlit as st
 
-# Try importing Flipside SDK
+# Import Flipside SDK
 try:
     from flipside import Flipside
 except ImportError:
@@ -46,7 +41,6 @@ def run_query(sql_text: str, key: str, url: str):
     client = Flipside(key, url)
     qrs = client.query(sql_text)
 
-    # تبدیل به pandas DataFrame
     try:
         if hasattr(qrs, "to_pandas"):
             df = qrs.to_pandas()
@@ -56,7 +50,6 @@ def run_query(sql_text: str, key: str, url: str):
         st.error(f"خطا در تبدیل نتیجه به DataFrame: {e}")
         return pd.DataFrame()
 
-    # تنظیم نوع ستون‌ها
     if 'hour' in df.columns:
         df['hour'] = pd.to_datetime(df['hour'])
     if 'tx_count' in df.columns:
