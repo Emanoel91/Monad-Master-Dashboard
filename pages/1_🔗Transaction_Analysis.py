@@ -1,65 +1,71 @@
-# streamlit_flipside_app_final.py
-# Streamlit app that queries Flipside via Python SDK and shows hourly transaction counts.
+# streamlit_flipside_mcp.py
+# Streamlit app that queries Flipside MCP endpoint using MCP Key and displays hourly transaction counts.
+# Usage:
+# 1) Install requirements: pip install streamlit pandas altair requests
+# 2) Add your MCP Key in Streamlit Cloud → Settings → Secrets:
+#    FLIPSIDE_MCP_KEY = "your_mcp_key_here"
+# 3) Run: streamlit run streamlit_flipside_mcp.py
 
-from datetime import timedelta
+import streamlit as st
 import pandas as pd
 import altair as alt
-import streamlit as st
+import requests
+from datetime import timedelta
 
-# Import Flipside SDK
-try:
-    from flipside import Flipside
-except ImportError:
-    st.error("SDK Flipside نصب نشده است. لطفاً pip install flipside-sdk را اجرا کنید.")
-    st.stop()
-
-st.set_page_config(page_title="Flipside — Hourly TXs", layout="wide")
-st.title("نمودار ستونی تراکنش‌ها (ساعتی) — Flipside Data")
+st.set_page_config(page_title="Flipside MCP — Hourly TXs", layout="wide")
+st.title("نمودار ستونی تراکنش‌ها (ساعتی) — Flipside MCP")
 
 # --- Config / Inputs ---
-api_key = st.secrets.get("FLIPSIDE_API_KEY")
-api_url = "https://api-v2.flipsidecrypto.xyz"
-
-if not api_key:
-    st.error("کلید SDK API پیدا نشد. لطفاً در Settings → Secrets کلید FLIPSIDE_API_KEY را وارد کنید.")
+mcp_key = st.secrets.get("FLIPSIDE_MCP_KEY")
+if not mcp_key:
+    st.error("کلید MCP پیدا نشد. لطفاً در Settings → Secrets کلید FLIPSIDE_MCP_KEY را وارد کنید.")
     st.stop()
 
 days = st.sidebar.slider("روزهای گذشته برای نمایش", min_value=1, max_value=30, value=7)
 
-sql = f"""
-SELECT 
-  date_trunc('hour', block_timestamp) as hour,
-  count(distinct tx_hash) as tx_count
-FROM ethereum.core.fact_transactions 
-WHERE block_timestamp >= GETDATE() - interval '{days} days'
-GROUP BY 1
-ORDER BY 1
-"""
+# MCP endpoint URL
+endpoint_url = f"https://mcp.flipsidecrypto.xyz/mcp/public/mcp?apiKey={mcp_key}"
+
+# SQL query payload
+sql_payload = {
+    "sql": f"""
+    SELECT 
+      date_trunc('hour', block_timestamp) as hour,
+      count(distinct tx_hash) as tx_count
+    FROM ethereum.core.fact_transactions 
+    WHERE block_timestamp >= GETDATE() - interval '{days} days'
+    GROUP BY 1
+    ORDER BY 1
+    """
+}
 
 @st.cache_data(ttl=timedelta(minutes=10))
-def run_query(sql_text: str, key: str, url: str):
-    client = Flipside(key, url)
-    qrs = client.query(sql_text)
-
+def run_query(payload):
     try:
-        if hasattr(qrs, "to_pandas"):
-            df = qrs.to_pandas()
+        response = requests.post(endpoint_url, json=payload, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        if 'results' in data:
+            df = pd.DataFrame(data['results'])
+        elif 'records' in data:
+            df = pd.DataFrame(data['records'])
         else:
-            df = pd.DataFrame(qrs)
-    except Exception as e:
-        st.error(f"خطا در تبدیل نتیجه به DataFrame: {e}")
+            df = pd.DataFrame(data)
+
+        if 'hour' in df.columns:
+            df['hour'] = pd.to_datetime(df['hour'])
+        if 'tx_count' in df.columns:
+            df['tx_count'] = pd.to_numeric(df['tx_count'], errors='coerce').fillna(0).astype(int)
+
+        return df
+
+    except requests.exceptions.RequestException as e:
+        st.error(f"خطا در اجرای درخواست MCP: {e}")
         return pd.DataFrame()
 
-    if 'hour' in df.columns:
-        df['hour'] = pd.to_datetime(df['hour'])
-    if 'tx_count' in df.columns:
-        df['tx_count'] = pd.to_numeric(df['tx_count'], errors='coerce').fillna(0).astype(int)
-
-    return df
-
 # --- Run and display ---
-with st.spinner("در حال اجرای کوئری روی Flipside (SDK)..."):
-    df = run_query(sql, api_key, api_url)
+with st.spinner("در حال اجرای کوئری روی Flipside MCP..."):
+    df = run_query(sql_payload)
 
 st.subheader(f"تعداد تراکنش‌ها - هر ساعت در {days} روز گذشته")
 
@@ -78,4 +84,4 @@ else:
         st.dataframe(df)
 
 st.markdown("---")
-st.caption("تذکر: از کلید SDK API در Secrets استفاده کنید تا امنیت حفظ شود.")
+st.caption("تذکر: از کلید MCP در Secrets استفاده کنید تا امنیت حفظ شود.")
