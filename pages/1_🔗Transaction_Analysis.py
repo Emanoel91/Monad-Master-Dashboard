@@ -1,10 +1,10 @@
-# streamlit_flipside_mcp.py
-# Streamlit app that queries Flipside MCP endpoint using MCP Key and displays hourly transaction counts.
+# streamlit_flipside_mcp_github_ready.py
+# نسخه آماده برای GitHub: استفاده از MCP Key از Streamlit Secrets بدون افشای کلید
 # Usage:
-# 1) Install requirements: pip install streamlit pandas altair requests
-# 2) Add your MCP Key in Streamlit Cloud → Settings → Secrets:
-#    FLIPSIDE_MCP_KEY = "your_mcp_key_here"
-# 3) Run: streamlit run streamlit_flipside_mcp.py
+# 1) Push این فایل به GitHub بدون کلید MCP
+# 2) در Streamlit Cloud → Settings → Secrets:
+#    FLIPSIDE_MCP_KEY = "کلید MCP واقعی شما"
+# 3) اپ به صورت خودکار کلید را از Secrets می‌خواند و نمودار را نمایش می‌دهد
 
 import streamlit as st
 import pandas as pd
@@ -15,12 +15,13 @@ from datetime import timedelta
 st.set_page_config(page_title="Flipside MCP — Hourly TXs", layout="wide")
 st.title("نمودار ستونی تراکنش‌ها (ساعتی) — Flipside MCP")
 
-# --- Config / Inputs ---
+# --- خواندن کلید از Secrets ---
 mcp_key = st.secrets.get("FLIPSIDE_MCP_KEY")
 if not mcp_key:
     st.error("کلید MCP پیدا نشد. لطفاً در Settings → Secrets کلید FLIPSIDE_MCP_KEY را وارد کنید.")
     st.stop()
 
+# --- پارامترهای کاربر ---
 days = st.sidebar.slider("روزهای گذشته برای نمایش", min_value=1, max_value=30, value=7)
 
 # MCP endpoint URL
@@ -63,7 +64,7 @@ def run_query(payload):
         st.error(f"خطا در اجرای درخواست MCP: {e}")
         return pd.DataFrame()
 
-# --- Run and display ---
+# --- اجرای کوئری و نمایش ---
 with st.spinner("در حال اجرای کوئری روی Flipside MCP..."):
     df = run_query(sql_payload)
 
