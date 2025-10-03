@@ -1,35 +1,26 @@
-# streamlit_flipside_app.py
-# Streamlit app that queries Flipside via their Python SDK and shows an hourly tx_count bar chart.
+# streamlit_flipside_app_requests.py
+# Streamlit app that queries Flipside via direct HTTP request to MCP endpoint (without SDK) and shows an hourly tx_count bar chart.
 # Usage:
-# 1) Install requirements: pip install streamlit flipside-sdk pandas altair
+# 1) Install requirements: pip install streamlit pandas altair requests
 # 2) Add your API key in Streamlit Cloud → Settings → Secrets:
 #    FLIPSIDE_API_KEY = "your_api_key_here"
-# 3) Run: streamlit run streamlit_flipside_app.py
+# 3) Run: streamlit run streamlit_flipside_app_requests.py
 
-from datetime import timedelta
+import streamlit as st
 import pandas as pd
 import altair as alt
-import streamlit as st
+import requests
+from datetime import timedelta
 
-# Try importing Flipside SDK
-try:
-    from flipside import Flipside
-except Exception:
-    Flipside = None
-
-st.set_page_config(page_title="Flipside — Hourly TXs", layout="wide")
+st.set_page_config(page_title="Flipside — Hourly TXs (Requests)", layout="wide")
 st.title("نمودار ستونی تراکنش‌ها (ساعتی) — Flipside Data")
 
 # --- Config / Inputs ---
-# Read API key from Streamlit secrets
 api_key = st.secrets.get("FLIPSIDE_API_KEY")
-api_url = "https://api-v2.flipsidecrypto.xyz"
-
 if not api_key:
     st.error("کلید API پیدا نشد. لطفاً در Settings → Secrets کلید FLIPSIDE_API_KEY را وارد کنید.")
     st.stop()
 
-# Simple query (same as the example you provided). You can edit time range in the UI.
 days = st.sidebar.slider("روزهای گذشته برای نمایش", min_value=1, max_value=30, value=7)
 
 sql = f"""
@@ -42,58 +33,40 @@ GROUP BY 1
 ORDER BY 1
 """
 
+endpoint_url = "https://mcp.flipsidecrypto.xyz/mcp/public/mcp"
+
 @st.cache_data(ttl=timedelta(minutes=10))
-def run_query(sql_text: str, key: str, url: str):
-    """Run the Flipside query and return a pandas DataFrame."""
-    if Flipside is None:
-        raise ImportError("Couldn't import `Flipside` from the flipside SDK. Make sure the package is installed and import path is correct.")
-
-    client = Flipside(key, url)
-    qrs = client.query(sql_text)
-
-    df = None
+def run_query(sql_text, api_key):
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "sql": sql_text,
+        "apiKey": api_key
+    }
     try:
-        if hasattr(qrs, "to_pandas"):
-            df = qrs.to_pandas()
-    except Exception:
-        df = None
+        response = requests.post(endpoint_url, json=payload, headers=headers, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        if 'results' in data:
+            df = pd.DataFrame(data['results'])
+        elif 'records' in data:
+            df = pd.DataFrame(data['records'])
+        else:
+            df = pd.DataFrame(data)
 
-    try:
-        if df is None and isinstance(qrs, pd.DataFrame):
-            df = qrs
-    except Exception:
-        pass
+        if 'hour' in df.columns:
+            df['hour'] = pd.to_datetime(df['hour'])
+        if 'tx_count' in df.columns:
+            df['tx_count'] = pd.to_numeric(df['tx_count'], errors='coerce').fillna(0).astype(int)
 
-    if df is None:
-        try:
-            if isinstance(qrs, dict):
-                if "results" in qrs:
-                    df = pd.DataFrame(qrs["results"])
-                elif "records" in qrs:
-                    df = pd.DataFrame(qrs["records"])
-        except Exception:
-            df = None
+        return df
 
-    if df is None:
-        try:
-            df = pd.DataFrame(qrs)
-        except Exception as e:
-            raise RuntimeError(f"Unable to convert query result to DataFrame: {e}")
-
-    if "hour" in df.columns:
-        df["hour"] = pd.to_datetime(df["hour"])
-    if "tx_count" in df.columns:
-        df["tx_count"] = pd.to_numeric(df["tx_count"], errors="coerce").fillna(0).astype(int)
-
-    return df
+    except requests.exceptions.RequestException as e:
+        st.error(f"خطا در اجرای درخواست HTTP: {e}")
+        return pd.DataFrame()
 
 # --- Run and display ---
-with st.spinner("در حال اجرای کوئری روی Flipside..."):
-    try:
-        df = run_query(sql, api_key, api_url)
-    except Exception as e:
-        st.error(f"اجرای کوئری ناموفق بود: {e}")
-        st.stop()
+with st.spinner("در حال اجرای کوئری روی Flipside (Requests)..."):
+    df = run_query(sql, api_key)
 
 st.subheader(f"تعداد تراکنش‌ها - هر ساعت در {days} روز گذشته")
 
@@ -112,4 +85,4 @@ else:
         st.dataframe(df)
 
 st.markdown("---")
-st.caption("تذکر: کلید API را در Settings → Secrets در Streamlit Cloud قرار دهید تا امنیت حفظ شود.")
+st.caption("تذکر: از کلید API در Secrets استفاده کنید تا امنیت حفظ شود.")
