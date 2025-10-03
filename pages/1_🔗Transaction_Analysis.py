@@ -1,1 +1,135 @@
+# streamlit_flipside_app.py
+# Streamlit app that queries Flipside via their Python SDK and shows an hourly tx_count bar chart.
+# Usage:
+# 1) Install requirements: pip install streamlit flipside-sdk pandas altair
+# 2) Set your API key as an environment variable:
+#    Linux / macOS: export FLIPSIDE_API_KEY="fv_NmMxNGZkYmYtZjZhYS00MGE4LThhMDctYTRmYTI2OGQyMjdi"
+#    Windows PowerShell: $env:FLIPSIDE_API_KEY = 'fv_NmMxNGZkYmYtZjZhYS00MGE4LThhMDctYTRmYTI2OGQyMjdi'
+#    (Or store your key somewhere safe and avoid committing it to source control.)
+# 3) Run: streamlit run streamlit_flipside_app.py
+
+import os
+from datetime import timedelta
+import pandas as pd
+import altair as alt
+import streamlit as st
+
+# The Flipside SDK import name may be `flipside` or `Flipside` depending on the package version.
+# The example in your note used: from flipside import Flipside
+try:
+    from flipside import Flipside
+except Exception:
+    # If the package name / import path differs, user will see an error with guidance.
+    Flipside = None
+
+st.set_page_config(page_title="Flipside — Hourly TXs", layout="wide")
+st.title("نمودار ستونی تراکنش‌ها (ساعتی) — Flipside Data")
+
+# --- Config / Inputs ---
+api_key = os.getenv("FLIPSIDE_API_KEY")
+api_url = os.getenv("FLIPSIDE_API_URL", "https://api-v2.flipsidecrypto.xyz")
+
+if not api_key:
+    st.warning("کلید API یافت نشد. لطفاً FLIPSIDE_API_KEY را در متغیر محیطی تنظیم کنید یا در کد قرار دهید.")
+    st.info("نکته امنیتی: از قراردادن مستقیم کلید در سورس کد خودداری کنید (گیت، اشتراک‌گذاری عمومی، ...).")
+
+# Simple query (same as the example you provided). You can edit time range in the UI.
+days = st.sidebar.slider("روزهای گذشته برای نمایش", min_value=1, max_value=30, value=7)
+
+sql = f"""
+SELECT 
+  date_trunc('hour', block_timestamp) as hour,
+  count(distinct tx_hash) as tx_count
+FROM ethereum.core.fact_transactions 
+WHERE block_timestamp >= GETDATE() - interval '{days} days'
+GROUP BY 1
+ORDER BY 1
+"""
+
+@st.cache_data(ttl=timedelta(minutes=10))
+def run_query(sql_text: str, key: str, url: str):
+    """Run the Flipside query and return a pandas DataFrame.
+    This function tries a couple of common return shapes from the SDK to be robust.
+    """
+    if not key:
+        raise ValueError("Missing Flipside API key (FLIPSIDE_API_KEY).")
+
+    if Flipside is None:
+        raise ImportError("Couldn't import `Flipside` from the flipside SDK. Make sure the package is installed and import path is correct.")
+
+    client = Flipside(key, url)
+    qrs = client.query(sql_text)
+
+    # Try common conversions to pandas DataFrame
+    df = None
+    # If the SDK offers a .to_pandas method on the result
+    try:
+        if hasattr(qrs, "to_pandas"):
+            df = qrs.to_pandas()
+    except Exception:
+        df = None
+
+    # If result is already a pandas DataFrame
+    try:
+        if df is None and isinstance(qrs, pd.DataFrame):
+            df = qrs
+    except Exception:
+        pass
+
+    # If result is a dict with 'results' or 'records'
+    if df is None:
+        try:
+            if isinstance(qrs, dict):
+                if "results" in qrs:
+                    df = pd.DataFrame(qrs["results"])
+                elif "records" in qrs:
+                    df = pd.DataFrame(qrs["records"])
+        except Exception:
+            df = None
+
+    # Last resort: try to create DataFrame directly
+    if df is None:
+        try:
+            df = pd.DataFrame(qrs)
+        except Exception as e:
+            raise RuntimeError(f"Unable to convert query result to DataFrame: {e}")
+
+    # Ensure proper dtypes
+    if "hour" in df.columns:
+        df["hour"] = pd.to_datetime(df["hour"])
+    if "tx_count" in df.columns:
+        df["tx_count"] = pd.to_numeric(df["tx_count"], errors="coerce").fillna(0).astype(int)
+
+    return df
+
+# --- Run and display ---
+if api_key:
+    with st.spinner("در حال اجرای کوئری روی Flipside..."):
+        try:
+            df = run_query(sql, api_key, api_url)
+        except Exception as e:
+            st.error(f"اجرای کوئری ناموفق بود: {e}")
+            st.stop()
+
+    st.subheader(f"تعداد تراکنش‌ها - هر ساعت در {days} روز گذشته")
+
+    if df.empty:
+        st.info("نتیجه‌ای برای نمایش وجود ندارد.")
+    else:
+        # Build an Altair bar chart
+        chart = alt.Chart(df).mark_bar().encode(
+            x=alt.X("hour:T", title="ساعت", axis=alt.Axis(format="%Y-%m-%d %H:%M")),
+            y=alt.Y("tx_count:Q", title="تعداد تراکنش‌های یکتا"),
+            tooltip=[alt.Tooltip("hour:T", title="ساعت"), alt.Tooltip("tx_count:Q", title="تعداد تراکنش")]
+        ).properties(height=500, width="container")
+
+        st.altair_chart(chart, use_container_width=True)
+
+        # Show raw table if user wants
+        if st.checkbox("نمایش جدول داده‌ها"):
+            st.dataframe(df)
+
+# Footer / tips
+st.markdown("---")
+st.caption("تذکر: از به اشتراک گذاشتن عمومی کلیدهای API خودداری کنید. اگر خواستید من این اپ را برای افزودن فیلترها/دیتاپایپ‌ها گسترش دهم، بگویید.")
 
